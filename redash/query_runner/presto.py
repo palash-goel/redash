@@ -5,7 +5,7 @@ from redash.utils import json_dumps, json_loads
 import logging
 logger = logging.getLogger(__name__)
 
-
+import requests
 try:
     from pyhive import presto
     from pyhive.exc import DatabaseError
@@ -72,9 +72,14 @@ class Presto(BaseQueryRunner):
                     'type': 'boolean',
                     'title': 'Allows passing logged-in users email address as username to presto, Instead of the default username being sent',
                     'default': False
+                },
+                'client_tags': {
+                    'type': 'string',
+                    'title': 'Client tags to be passed to presto (json format)',
+                    'default': '{}'
                 }
             },
-            'order': ['host', 'protocol', 'port', 'username', 'password', 'schema', 'catalog', 'source', 'blacklisted_table_schemas', 'user_impersonation'],
+            'order': ['host', 'protocol', 'port', 'username', 'password', 'schema', 'catalog', 'source', 'blacklisted_table_schemas', 'user_impersonation', 'client_tags'],
             'required': ['host']
         }
 
@@ -85,6 +90,13 @@ class Presto(BaseQueryRunner):
     @classmethod
     def type(cls):
         return "presto"
+
+    def _get_client_tags(self):
+        client_tags = ""
+        try:
+            client_tags=",".join([f'{k}={v}' for k,v in json_loads(self.configuration.get('client_tags')).items()])
+        finally:
+            return client_tags
 
     def get_schema(self, get_stats=False):
         schema = {}
@@ -124,6 +136,9 @@ class Presto(BaseQueryRunner):
         else:
             username = user.email
 
+        session=requests.Session()
+        session.headers.update({"X-Presto-Client-Tags":self._get_client_tags()})
+
         connection = presto.connect(
             host=self.configuration.get('host', ''),
             port=self.configuration.get('port', 8080),
@@ -132,7 +147,8 @@ class Presto(BaseQueryRunner):
             password=(self.configuration.get('password') or None),
             catalog=self.configuration.get('catalog', 'hive'),
             schema=self.configuration.get('schema', 'default'),
-            source=self.configuration.get('source', 'pyhive')
+            source=self.configuration.get('source', 'pyhive'),
+            requests_session=session
         )
 
         cursor = connection.cursor()
